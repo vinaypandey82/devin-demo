@@ -1,21 +1,15 @@
 #include "tx_definitions.h"
 
-EXEC SQL BEGIN DECLARE SECTION;
-    char h_rid[11];
-    char h_err[100];
-    int  h_acc;
-EXEC SQL END DECLARE SECTION;
-
 void log_exception_to_db(PaymentRequest *req, const char *msg) {
-    strncpy(h_rid, req->req_id, 10);
-    h_rid[10] = '\0';
-    h_acc = req->src_acc;
-    strncpy(h_err, msg, 99);
+    EXEC SQL BEGIN DECLARE SECTION;
+        char r_id[11]; char r_msg[100]; int r_acc;
+    EXEC SQL END DECLARE SECTION;
 
-    /* This executes in a separate transaction context 
-       to survive the main transaction's ROLLBACK.
-    */
-    EXEC SQL INSERT INTO async_failures (req_id, sender_acc, error_msg, tstamp)
-             VALUES (:h_rid, :h_acc, :h_err, CURRENT_TIMESTAMP);
+    strncpy(r_id, req->req_id, 10); r_id[10] = '\0';
+    strncpy(r_msg, msg, 99);
+    r_acc = req->src_acc;
+
+    EXEC SQL INSERT INTO async_error_logs (req_id, acc_id, error_desc, log_date)
+             VALUES (:r_id, :r_acc, :r_msg, CURRENT_TIMESTAMP);
     EXEC SQL COMMIT; 
 }
