@@ -1,0 +1,43 @@
+#include <stdio.h>
+#include "common_defs.h"
+
+// External function prototypes
+extern int validate_and_lock(int, double);
+extern int adjust_balance(int, double);
+extern void log_transaction(int, const char*);
+
+int perform_transfer(int from_id, int to_id, double amount) {
+    EXEC SQL WHENEVER SQLERROR DO return -99;
+
+    // 1. Lock Source
+    if (validate_and_lock(from_id, amount) != 0) {
+        EXEC SQL ROLLBACK WORK;
+        return 1;
+    }
+
+    // 2. Lock Destination
+    if (validate_and_lock(to_id, 0) != 0) {
+        EXEC SQL ROLLBACK WORK;
+        return 2;
+    }
+
+    // 3. Perform the Move
+    adjust_balance(from_id, -amount);
+    adjust_balance(to_id, amount);
+
+    // 4. Audit Trail
+    log_transaction(from_id, "Funds Sent");
+    log_transaction(to_id, "Funds Received");
+
+    // 5. Global Commit
+    EXEC SQL COMMIT WORK RELEASE;
+    return 0;
+}
+
+int main() {
+    EXEC SQL CONNECT "bank_user" IDENTIFIED BY "bank_pass";
+    int status = perform_transfer(1001, 2002, 500.00);
+    if (status == 0) printf("Success\n");
+    else printf("Failed with code %d\n", status);
+    return 0;
+}
