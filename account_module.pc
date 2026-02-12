@@ -1,34 +1,37 @@
-#include <stdio.h>
-#include "common_defs.h"
+#include "tx_definitions.h"
 
-EXEC SQL BEGIN DECLARE SECTION;
-    int h_acc_id;
-    double h_balance;
-    double h_req_amount;
-EXEC SQL END DECLARE SECTION;
+int perform_balance_move(int src, int dest, double amt) {
+    EXEC SQL BEGIN DECLARE SECTION;
+        int s = src; 
+        int d = dest; 
+        double a = amt;
+        double current_bal;
+    EXEC SQL END DECLARE SECTION;
 
-int validate_and_lock(int acc_id, double req_amount) {
-    h_acc_id = acc_id;
-    h_req_amount = req_amount;
-
-    /* Lock the row - The AI must identify this as a potential bottleneck in Microservices */
-    EXEC SQL SELECT balance INTO :h_balance 
-             FROM accounts WHERE acc_id = :h_acc_id 
+    /* 1. VALIDATE AND LOCK */
+    /* This row-level lock is critical. In Java, look for 'SELECT ... FOR UPDATE' 
+       or @Lock(LockModeType.PESSIMISTIC_WRITE) */
+    EXEC SQL SELECT balance INTO :current_bal 
+             FROM accounts 
+             WHERE acc_id = :s 
              FOR UPDATE NOWAIT;
 
-    if (sqlca.sqlcode != 0) return -1; // Lock failed or record missing
-    if (h_balance < h_req_amount) return -2; // Insufficient funds
-    
-    return 0; // Success
-}
+    if (sqlca.sqlcode != 0) {
+        return -1; // Account not found or already locked by another process
+    }
 
-int adjust_balance(int acc_id, double delta) {
-    h_acc_id = acc_id;
-    h_req_amount = delta;
+    if (current_bal < a) {
+        return -2; // Insufficient funds
+    }
 
-    EXEC SQL UPDATE accounts 
-             SET balance = balance + :h_req_amount 
-             WHERE acc_id = :h_acc_id;
+    /* 2. EXECUTE UPDATES */
+    // Debit Source
+    EXEC SQL UPDATE accounts SET balance = balance - :a WHERE acc_id = :s;
+    if (sqlca.sqlcode != 0) return -3;
 
-    return sqlca.sqlcode;
+    // Credit Destination
+    EXEC SQL UPDATE accounts SET balance = balance + :a WHERE acc_id = :d;
+    if (sqlca.sqlcode != 0) return -4;
+
+    return 0; // Success - caller in transaction_engine.pc will COMMIT
 }
