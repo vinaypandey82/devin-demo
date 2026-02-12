@@ -1,18 +1,21 @@
-#include "common_defs.h"
+#include "tx_definitions.h"
 
 EXEC SQL BEGIN DECLARE SECTION;
-    int l_acc_id;
-    char l_msg[128];
+    char h_rid[11];
+    char h_err[100];
+    int  h_acc;
 EXEC SQL END DECLARE SECTION;
 
-void log_transaction(int acc_id, const char* msg) {
-    l_acc_id = acc_id;
-    strcpy(l_msg, msg);
+void log_exception_to_db(PaymentRequest *req, const char *msg) {
+    strncpy(h_rid, req->req_id, 10);
+    h_rid[10] = '\0';
+    h_acc = req->src_acc;
+    strncpy(h_err, msg, 99);
 
-    /* Autonomous transaction simulation */
-    EXEC SQL SAVEPOINT log_sp;
-    EXEC SQL INSERT INTO audit_logs (acc_id, log_date, message) 
-             VALUES (:l_acc_id, CURRENT_TIMESTAMP, :l_msg);
-    
-    // We don't commit here because it depends on the main transaction
+    /* This executes in a separate transaction context 
+       to survive the main transaction's ROLLBACK.
+    */
+    EXEC SQL INSERT INTO async_failures (req_id, sender_acc, error_msg, tstamp)
+             VALUES (:h_rid, :h_acc, :h_err, CURRENT_TIMESTAMP);
+    EXEC SQL COMMIT; 
 }
