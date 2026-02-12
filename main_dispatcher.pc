@@ -1,34 +1,45 @@
 #include <stdio.h>
+#include <string.h>
 #include "tx_definitions.h"
 
+// Explicitly link the other modules
 extern int parse_positional_string(const char*, PaymentRequest*);
 extern void process_payment(PaymentRequest*);
 
 char* gateway_entry_point(const char* raw_300_char_input) {
-    static char response[300];
+    static char response[301];
     PaymentRequest req;
-    memset(response, ' ', 300); // Initialize with spaces
+    memset(response, ' ', 300);
 
-    // 1. Parsing
+    // 1. Parsing - Tests Deserialization
     if (parse_positional_string(raw_300_char_input, &req) != 0) {
-        sprintf(response, "ERR: INVALID_LENGTH");
-        return response;
-    }
-
-    // 2. Execution (Branches SYNC/ASYNC inside)
-    process_payment(&req);
-
-    // 3. Positional Formatting for Output
-    // Format: 0-10 Status, 10-20 ReqID, 20-30 Sender
-    if (sqlca.sqlcode == 0) {
-        sprintf(response, "%-10s%-10s%010d", "SUCCESS", req.req_id, req.src_acc);
+        sprintf(response, "%-10s", "ERR_LEN"); 
     } else {
-        sprintf(response, "%-10s%-10s%010d", "FAILURE", req.req_id, req.src_acc);
+        // 2. Execution - Tests Service Orchestration
+        process_payment(&req);
+
+        // 3. Positional Formatting - Tests Serialization
+        if (sqlca.sqlcode == 0) {
+            sprintf(response, "%-10s%-10s%010d", "SUCCESS", req.req_id, req.src_acc);
+        } else {
+            sprintf(response, "%-10s%-10s%010d", "FAILURE", req.req_id, req.src_acc);
+        }
     }
     
-    // Fill remaining with spaces to maintain 300 chars
-    for(int i = strlen(response); i < 299; i++) response[i] = ' ';
-    response[299] = '\0';
+    // Maintain 300-char invariant
+    for(int i = strlen(response); i < 300; i++) response[i] = ' ';
+    response[300] = '\0';
 
     return response;
+}
+
+int main() {
+    /* Required for Pro*C context */
+    EXEC SQL CONNECT "db_user" IDENTIFIED BY "db_pass";
+    
+    const char* sample_input = "0000000001WIRE      ...[300 chars]...";
+    char* result = gateway_entry_point(sample_input);
+    
+    printf("FINAL_OUT: [%s]\n", result);
+    return 0;
 }
