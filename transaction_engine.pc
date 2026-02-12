@@ -1,0 +1,23 @@
+#include "tx_definitions.h"
+extern int perform_balance_move(int, int, double); // Link to account_module
+
+void process_payment(PaymentRequest *req) {
+    EXEC SQL SAVEPOINT start_tx;
+
+    int result = perform_balance_move(req->src_acc, req->dest_acc, req->amount);
+
+    if (result != 0) {
+        // Here is the "Branching Logic" you requested
+        if (req->channel == CH_SYNC_INTERNAL) {
+            EXEC SQL ROLLBACK TO SAVEPOINT start_tx;
+            // Immediate response logic would go here
+        } else {
+            EXEC SQL ROLLBACK TO SAVEPOINT start_tx;
+            // Keep the record of failure in DB (Async requirement)
+            log_exception_to_db(req, "Transaction failed in Account Module");
+            EXEC SQL COMMIT; 
+        }
+    } else {
+        EXEC SQL COMMIT;
+    }
+}
