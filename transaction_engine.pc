@@ -1,23 +1,49 @@
+#include <stdio.h>
+#include <unistd.h>
 #include "tx_definitions.h"
-extern int perform_balance_move(int, int, double); // Link to account_module
+
+#define MAX_RETRIES 3
 
 void process_payment(PaymentRequest *req) {
-    EXEC SQL SAVEPOINT start_tx;
+    int retry_count = 0;
+    int success = 0;
+    int status_code = 0;
 
-    int result = perform_balance_move(req->src_acc, req->dest_acc, req->amount);
+    while (retry_count < MAX_RETRIES && !success) {
+        // STEP 1: Define a clear transaction boundary
+        EXEC SQL SAVEPOINT start_tx;
 
-    if (result != 0) {
-        // Here is the "Branching Logic" you requested
-        if (req->channel == CH_SYNC_INTERNAL) {
+        // STEP 2: Call the worker (Restored with FOR UPDATE locking)
+        status_code = perform_balance_move(req->src_acc, req->dest_acc, req->amount);
+
+        if (status_code == 0) {
+            // SUCCESS FLOW
+            EXEC SQL COMMIT WORK;
+            success = 1;
+            printf("ID: %s | Status: SUCCESS\n", req->req_id);
+        } 
+        else if (status_code == -1 && retry_count < MAX_RETRIES - 1) {
+            /* RETRY LOGIC: -1 indicates a LOCK failure (NOWAIT triggered)
+               We rollback and wait before trying again. */
             EXEC SQL ROLLBACK TO SAVEPOINT start_tx;
-            // Immediate response logic would go here
-        } else {
+            retry_count++;
+            printf("ID: %s | Locked. Retrying %d/%d...\n", req->req_id, retry_count, MAX_RETRIES);
+            sleep(1); // Wait for other TX to finish
+        } 
+        else {
+            /* FINAL FAILURE FLOW (Insufficient funds or Max Retries exceeded) */
             EXEC SQL ROLLBACK TO SAVEPOINT start_tx;
-            // Keep the record of failure in DB (Async requirement)
-            log_exception_to_db(req, "Transaction failed in Account Module");
-            EXEC SQL COMMIT; 
+            
+            if (req->channel == CH_ASYNC_WIRE) {
+                /* COMPLEXITY: Partial Rollback. 
+                   Money move is reverted, but the 'Audit' record is PERSISTED. */
+                char err_msg[100];
+                sprintf(err_msg, "TX Failed with Code %d after %d retries", status_code, retry_count);
+                log_exception_to_db(req, err_msg);
+            }
+            
+            printf("ID: %s | Status: FAILED | Code: %d\n", req->req_id, status_code);
+            break; 
         }
-    } else {
-        EXEC SQL COMMIT;
     }
 }
