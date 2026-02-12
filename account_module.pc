@@ -1,0 +1,34 @@
+#include <stdio.h>
+#include "common_defs.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+    int h_acc_id;
+    double h_balance;
+    double h_req_amount;
+EXEC SQL END DECLARE SECTION;
+
+int validate_and_lock(int acc_id, double req_amount) {
+    h_acc_id = acc_id;
+    h_req_amount = req_amount;
+
+    /* Lock the row - The AI must identify this as a potential bottleneck in Microservices */
+    EXEC SQL SELECT balance INTO :h_balance 
+             FROM accounts WHERE acc_id = :h_acc_id 
+             FOR UPDATE NOWAIT;
+
+    if (sqlca.sqlcode != 0) return -1; // Lock failed or record missing
+    if (h_balance < h_req_amount) return -2; // Insufficient funds
+    
+    return 0; // Success
+}
+
+int adjust_balance(int acc_id, double delta) {
+    h_acc_id = acc_id;
+    h_req_amount = delta;
+
+    EXEC SQL UPDATE accounts 
+             SET balance = balance + :h_req_amount 
+             WHERE acc_id = :h_acc_id;
+
+    return sqlca.sqlcode;
+}
